@@ -2,13 +2,35 @@ package main
 
 import (
 	"fmt"
-	"golang.org/x/net/html"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
+
+	"golang.org/x/net/html"
 )
+
+func downloadAlbumArt(albumArtLink string, albumTitle string, waitGroup *sync.WaitGroup) {
+	defer waitGroup.Done()
+
+	response, err := http.Get(albumArtLink)
+	if err != nil {
+		fmt.Printf("Error making http request: %s\n", err)
+	}
+	defer response.Body.Close()
+
+	albumArt, err := io.ReadAll(response.Body)
+	if err != nil {
+		fmt.Printf("Error reading request body %s\n", err)
+	}
+	err = os.WriteFile("album_arts"+albumTitle+".jpg", albumArt, 0666)
+	if err != nil {
+		fmt.Printf("Error writing file: %s\n", err)
+	}
+	// fmt.Printf("Downloaded %s\n", albumTitle)
+}
 
 func getNodeAttr(node *html.Node, key string) string {
 	for _, attribute := range node.Attr {
@@ -19,35 +41,22 @@ func getNodeAttr(node *html.Node, key string) string {
 	return ""
 }
 
-func processMetaNode(node *html.Node) {
-	var titleNode *html.Node
-	var imageLinkNode *html.Node
-	var propertyValue = getNodeAttr(node, "property")
-
-	if propertyValue == "og:image" {
-		imageLinkNode = node
-	} else if propertyValue == "og:title" {
-		titleNode = node
-	}
-	if titleNode == nil || imageLinkNode == nil {
-		return
-	}
-
-	for _, attribute := range titleNode.Attr {
-		if attribute.Key == "content" {
-
-		}
-	}
-}
-
-func parseAlbumPage(node *html.Node) {
+func parseAlbumPage(node *html.Node, albumData map[string]string) {
 	if node.Type == html.ElementNode && node.Data == "meta" {
-		processMetaNode(node)
+		propertyValue := getNodeAttr(node, "property")
+
+		if propertyValue == "og:image" || propertyValue == "og:title" {
+			albumData[propertyValue] = getNodeAttr(node, "content")
+
+			if len(albumData) == 2 {
+				return
+			}
+		}
 	}
 
 	// traverse the child nodes
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
-		parseAlbumPage(child)
+		parseAlbumPage(child, albumData)
 	}
 }
 
@@ -61,15 +70,20 @@ func fetchAlbumPage(albumPageLink string, waitGroup *sync.WaitGroup) {
 	}
 	defer response.Body.Close()
 
-	//body, err := io.ReadAll(response.Body)
-	//fmt.Println(string(body))
-
 	document, err := html.Parse(response.Body)
 	if err != nil {
 		fmt.Printf("error parsing html: %s\n", err)
 		os.Exit(1)
 	}
-	parseAlbumPage(document)
+	albumData := map[string]string{}
+	parseAlbumPage(document, albumData)
+
+	if len(albumData) != 2 {
+		fmt.Printf("Album page didn't contain necessary data! %s\n", albumPageLink)
+		return
+	}
+	waitGroup.Add(1)
+	go downloadAlbumArt(albumData["og:image"], albumData["og:title"], waitGroup)
 }
 
 func main() {
@@ -82,13 +96,13 @@ func main() {
 
 	var waitGroup sync.WaitGroup
 
-	waitGroup.Add(1)
-	go fetchAlbumPage(links[0], &waitGroup)
+	// waitGroup.Add(1)
+	// go fetchAlbumPage(links[0], &waitGroup)
 
-	//waitGroup.Add(len(links))
-	//for _, link := range links {
-	//	go fetchAlbumPage(link, &waitGroup)
-	//}
+	waitGroup.Add(len(links))
+	for _, link := range links {
+		go fetchAlbumPage(link, &waitGroup)
+	}
 
 	waitGroup.Wait()
 }
