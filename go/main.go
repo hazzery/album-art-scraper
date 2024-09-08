@@ -9,11 +9,48 @@ import (
 	"strings"
 	"sync"
 
-	exif "github.com/dsoprea/go-exif/v3"
+	"github.com/dsoprea/go-exif/v3"
+	jpeg "github.com/dsoprea/go-jpeg-image-structure/v2"
 	"golang.org/x/net/html"
 )
 
 type StringSet = map[string]struct{}
+
+func writeFileWithExif(imageData []byte, filename string, albumCode string) {
+	jpegMediaParser := jpeg.NewJpegMediaParser()
+	intfc, err := jpegMediaParser.ParseBytes(imageData)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	segmentList := intfc.(*jpeg.SegmentList)
+
+	exifBuilder, err := segmentList.ConstructExifBuilder()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	imageFileDirectory0Builder, err := exif.GetOrCreateIbFromRootIb(exifBuilder, "IFD0")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = imageFileDirectory0Builder.SetStandardWithName("DocumentName", albumCode)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	imageFileDirectoryByteEncoder := exif.NewIfdByteEncoder()
+	updatedRawExif, err := imageFileDirectoryByteEncoder.EncodeToExif(imageFileDirectory0Builder)
+
+	log.Print("in write:")
+	log.Print(string(updatedRawExif))
+
+	err = os.WriteFile(filename, imageData, 0666)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
 
 func downloadAlbumArt(
 	albumArtLink string,
@@ -26,24 +63,20 @@ func downloadAlbumArt(
 
 	response, err := albumArtClient.Get(albumArtLink)
 	if err != nil {
-		fmt.Printf("Error making http request: %s\n", err)
+		log.Printf("Error making http request: %s\n", err)
 	}
 	defer response.Body.Close()
 
 	albumArt, err := io.ReadAll(response.Body)
 	if err != nil {
-		fmt.Printf("Error reading request body %s\n", err)
+		log.Printf("Error reading request body %s\n", err)
 	}
 
 	albumTitle = strings.ReplaceAll(albumTitle, "/", " ")
 	albumArtFileName := fmt.Sprintf("%s/%s.jpg", albumArtDirectoryName, albumTitle)
 
-	err = os.WriteFile(albumArtFileName, albumArt, 0666)
-	if err != nil {
-		fmt.Printf("Error writing file: %s\n", err)
-	}
-
-	fmt.Printf("Downloaded %s\n", albumTitle)
+	writeFileWithExif(albumArt, albumArtFileName, albumArtLink[len(albumArtLink)-11:])
+	log.Printf("Downloaded %s\n", albumTitle)
 }
 
 func getNodeAttr(node *html.Node, key string) string {
@@ -74,19 +107,19 @@ func parseAlbumPage(node *html.Node, albumData map[string]string) {
 	}
 }
 
-func fetchAlbumPage(albumPageLink string, waitGroup *sync.WaitGroup, albumPageClient *http.Client, albumArtClient *http.Client) {
+func fetchAlbumPage(albumPageLink string, waitGroup *sync.WaitGroup, albumPageClient *http.Client, albumArtClient *http.Client, albumArtDirectoryName string) {
 	defer waitGroup.Done()
 
 	response, err := albumPageClient.Get(albumPageLink)
 	if err != nil {
-		fmt.Printf("error making http request: %s\n", err)
+		log.Printf("error making http request: %s\n", err)
 		os.Exit(1)
 	}
 	defer response.Body.Close()
 
 	document, err := html.Parse(response.Body)
 	if err != nil {
-		fmt.Printf("error parsing html: %s\n", err)
+		log.Printf("error parsing html: %s\n", err)
 		os.Exit(1)
 	}
 
@@ -94,12 +127,12 @@ func fetchAlbumPage(albumPageLink string, waitGroup *sync.WaitGroup, albumPageCl
 	parseAlbumPage(document, albumData)
 
 	if len(albumData) != 2 {
-		fmt.Printf("Album page didn't contain necessary data! %s\n", albumPageLink)
+		log.Printf("Album page didn't contain necessary data! %s\n", albumPageLink)
 		return
 	}
 
 	waitGroup.Add(1)
-	go downloadAlbumArt(albumData["og:image"], albumData["og:title"], waitGroup, albumArtClient)
+	go downloadAlbumArt(albumData["og:image"], albumData["og:title"], waitGroup, albumArtClient, albumArtDirectoryName)
 }
 
 func getAllLinks(filename string) []string {
@@ -117,47 +150,52 @@ func getCodesOfExistingAlbumArt(albumArtDirectoryName string) StringSet {
 	albumArtDirectory, err := os.ReadDir(albumArtDirectoryName)
 	if err != nil {
 		log.Println(err)
-		os.Mkdir(albumArtDirectoryName, os.ModePerm)
-
-		var set StringSet
-		return set
-	} else {
-		var set StringSet
-
-		for _, albumArtFileEntry := range albumArtDirectory {
-			if !albumArtFileEntry.IsDir() {
-				continue
-			}
-
-			albumArtFile, err := os.Open(albumArtDirectoryName + "/" + albumArtFileEntry.Name())
-			if err != nil {
-				log.Fatalf("Failure to read in existing file %s: %s", albumArtFileEntry.Name(), err)
-			}
-			metadata, err := exif.Decode(albumArtFile)
-			if err != nil {
-				log.Fatal(err)
-			}
-			albumCode, err := metadata.Get(exif.ImageUniqueID)
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			set[albumCode.String()] = struct{}{}
+		err := os.Mkdir(albumArtDirectoryName, os.ModePerm)
+		if err != nil {
+			log.Fatal(err)
 		}
+
+		var set StringSet
 		return set
 	}
+
+	jpegMediaParser := jpeg.NewJpegMediaParser()
+
+	var set StringSet
+
+	for _, albumArtFileEntry := range albumArtDirectory {
+		if albumArtFileEntry.IsDir() {
+			continue
+		}
+
+		albumArtFileName := albumArtDirectoryName + "/" + albumArtFileEntry.Name()
+
+		albumArtFile, err := jpegMediaParser.ParseFile(albumArtFileName)
+		rootIfd, data, err := albumArtFile.Exif()
+		log.Print("in Read:")
+		log.Print(string(data))
+		documentName, err := rootIfd.FindTagWithName("DocumentName")
+		if len(documentName) != 1 {
+			// log.Fatal(err)
+			log.Print(err)
+		}
+
+		// albumCode := documentName[0]
+		// set[albumCode.String()] = struct{}{}
+	}
+	return set
 }
 
 func getLinksToDownload(linksFileName string, albumArtDirectoryName string) []string {
 	allLinks := getAllLinks(linksFileName)
 	existingAlbumCodes := getCodesOfExistingAlbumArt(albumArtDirectoryName)
 
-	const YOUTUBE_MUSIC_ALBUM_CODE_LENGTH = 11
+	const YoutubeMusicAlbumCodeLength = 11
 
 	var linksToDownload []string
 
 	for _, link := range allLinks {
-		albumCode := link[len(link)-YOUTUBE_MUSIC_ALBUM_CODE_LENGTH:]
+		albumCode := link[len(link)-YoutubeMusicAlbumCodeLength:]
 		_, ok := existingAlbumCodes[albumCode]
 		if !ok {
 			linksToDownload = append(linksToDownload, link)
@@ -182,7 +220,13 @@ func main() {
 
 	waitGroup.Add(len(linksToDownload))
 	for _, link := range linksToDownload {
-		go fetchAlbumPage(link, &waitGroup, youTubeMusicClient, googleUserContentClient)
+		go fetchAlbumPage(
+			link,
+			&waitGroup,
+			youTubeMusicClient,
+			googleUserContentClient,
+			"album_arts",
+		)
 	}
 
 	waitGroup.Wait()
