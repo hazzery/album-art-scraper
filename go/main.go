@@ -46,7 +46,8 @@ func writeFileWithExif(imageData []byte, filename string, albumCode string) {
 	log.Print("in write:")
 	log.Print(string(updatedRawExif))
 
-	err = os.WriteFile(filename, imageData, 0666)
+	// Octal value 0o0644 corresponds to unix file mode -rw-r--r--
+	err = os.WriteFile(filename, imageData, 0o0644)
 	if err != nil {
 		log.Fatal(err)
 	}
