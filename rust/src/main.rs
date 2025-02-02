@@ -16,24 +16,10 @@ fn get_all_links(filename: &str) -> Result<Vec<String>, io::Error> {
     Ok(parts.collect())
 }
 
-async fn request_album_data(link: &str) -> Option<(String, String)> {
-    let response = match reqwest::get(link).await {
-        Err(error) => {
-            println!("{}", error);
-            return None;
-        }
-        Ok(response) => response,
-    };
+async fn request_album_data(link: &str) -> Result<(String, String), anyhow::Error> {
+    let response = reqwest::get(link).await?.text().await?;
 
-    let response_text = match response.text().await {
-        Err(error) => {
-            println!("Response text gave error: {}", error);
-            return None;
-        }
-        Ok(response_text) => response_text,
-    };
-
-    let document = scraper::Html::parse_document(&response_text);
+    let document = scraper::Html::parse_document(&response);
 
     let mut album_art_link: Option<&str> = None;
     let mut album_title: Option<&str> = None;
@@ -47,45 +33,35 @@ async fn request_album_data(link: &str) -> Option<(String, String)> {
         };
     }
 
-    if let (Some(title), Some(link)) = (album_title, album_art_link) {
-        Some((title.to_string(), link.to_string()))
-    } else {
-        println!("Could not find album title or album art link");
-        None
+    match (album_title, album_art_link) {
+        (Some(title), Some(link)) => Ok((title.to_string(), link.to_string())),
+        _ => Err(anyhow::Error::msg(
+            "Failed to find either the album art link or the album title.",
+        )),
     }
 }
 
-async fn download_album_art_image(album_title: &str, album_art_link: &str) {
-    let response = match reqwest::get(album_art_link).await {
-        Err(error) => {
-            println!(
-                "Request to {} gave error response: {}",
-                album_art_link, error
-            );
-            return;
-        }
-        Ok(response) => response,
-    };
+async fn download_album_art_image(
+    album_title: &str,
+    album_art_link: &str,
+) -> Result<(), anyhow::Error> {
+    let response = reqwest::get(album_art_link).await?.bytes().await?;
 
-    let response_bytes = match response.bytes().await {
-        Err(error) => {
-            println!("Response bytes gave error: {}", error);
-            return;
-        }
-        Ok(response_bytes) => response_bytes,
-    };
+    let mut file = File::create(format!("album_arts/{}.jpg", album_title))?;
+    file.write_all(&response)?;
 
-    let mut file = match File::create(format!("album_arts/{}.jpg", album_title)) {
-        Err(error) => {
-            println!("Creating file failed with error: {}", error);
-            return;
-        }
-        Ok(file) => file,
-    };
+    Ok(())
+}
 
-    if let Err(error) = file.write_all(&response_bytes) {
-        println!("Writing image to file failed with error: {}", error);
-    }
+async fn run(link: String) {
+    match request_album_data(&link).await {
+        Ok((album_title, album_art_link)) => {
+            if let Err(error) = download_album_art_image(&album_title, &album_art_link).await {
+                println!("{}", error);
+            }
+        }
+        Err(error) => println!("{}", error),
+    };
 }
 
 async fn request_all_album_pages(links: &[String]) {
@@ -93,11 +69,7 @@ async fn request_all_album_pages(links: &[String]) {
 
     for link in links.iter() {
         let link_clone = link.clone();
-        let task = tokio::spawn(async move {
-            if let Some((album_title, album_art_link)) = request_album_data(&link_clone).await {
-                download_album_art_image(&album_title, &album_art_link).await
-            };
-        });
+        let task = tokio::spawn(async { run(link_clone).await });
 
         tasks.push(task); // Store the task
     }
