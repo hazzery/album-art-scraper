@@ -1,4 +1,3 @@
-use std::fs;
 use std::io::prelude::*;
 use std::{fs::File, io};
 
@@ -77,7 +76,7 @@ async fn request_all_album_pages(links: &[String]) {
 
 fn main() {
     let links = get_all_links("links.txt").expect("No links.txt file present");
-    fs::create_dir_all("album_arts").expect("Failed to create album_arts directory");
+    std::fs::create_dir_all("album_arts").expect("Failed to create album_arts directory");
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
