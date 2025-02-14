@@ -60,7 +60,7 @@ async fn run(link: String) {
                 println!("{}", error);
             }
         }
-        Err(error) => println!("{}", error),
+        Err(error) => println!("{:?}\n", error),
     };
 }
 
