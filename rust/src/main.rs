@@ -1,8 +1,8 @@
 use core::panic;
+use std::fs::File;
 use std::io::prelude::*;
-use std::{fs::File, io};
 
-fn get_all_links(filename: &str) -> Result<Vec<String>, io::Error> {
+fn get_all_links(filename: &str) -> Result<Vec<String>, std::io::Error> {
     let mut links_file = File::open(filename)?;
 
     let mut all_links = String::new();
