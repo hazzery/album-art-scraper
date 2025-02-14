@@ -1,3 +1,4 @@
+use core::panic;
 use std::io::prelude::*;
 use std::{fs::File, io};
 
@@ -78,7 +79,18 @@ async fn request_all_album_pages(links: &[String]) {
 }
 
 fn main() {
-    let links = get_all_links("links.txt").expect("No links.txt file present");
+    let mut links = get_all_links("links.txt").expect("A file named links.txt should be present");
+
+    // use this function once the stabilsation is released.
+    // links.pop_if(|link: &mut String| link.is_empty());
+    if let Some("") = links.last().map(|link: &String| link.as_str()) {
+        links.pop();
+    }
+
+    if links.is_empty() {
+        panic!("No links in links.txt")
+    }
+
     std::fs::create_dir_all("album_arts").expect("Failed to create album_arts directory");
 
     tokio::runtime::Builder::new_multi_thread()
