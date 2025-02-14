@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ytm-album-art-downloader"
+version = "0.1.0"
+dependencies = ["aiohttp", "beautifulsoup4"]
+requires-python = ">=3.12"
+authors = [
+  { name = "Harry Parkes", email = "harrydparkes@proton.me" },
+]
+description = "Scrape album art images from YouTube Music"
