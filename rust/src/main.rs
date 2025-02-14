@@ -10,7 +10,7 @@ fn get_all_links(filename: &str) -> Result<Vec<String>, io::Error> {
     let parts = all_links
         .trim_end_matches("\n")
         .split(", ")
-        .map(|slice| slice.to_string());
+        .map(|slice: &str| slice.to_string());
 
     Ok(parts.collect())
 }
