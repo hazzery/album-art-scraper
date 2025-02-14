@@ -64,13 +64,16 @@ async fn run(link: String) {
 }
 
 async fn request_all_album_pages(links: &[String]) {
-    let mut tasks = Vec::new();
+    let mut set = tokio::task::JoinSet::new();
 
     for link in links.iter() {
         let link_clone = link.clone();
-        let task = tokio::spawn(async { run(link_clone).await });
-
-        tasks.push(task); // Store the task
+        set.spawn(async move { run(link_clone).await });
+    }
+    while let Some(res) = set.join_next().await {
+        if let Err(error) = res {
+            println!("{}", error);
+        }
     }
 }
 
