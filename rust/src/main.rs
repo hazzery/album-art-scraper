@@ -1,19 +1,32 @@
-use core::panic;
+use little_exif::exif_tag::ExifTag;
+use little_exif::metadata::Metadata;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::prelude::*;
 
-fn get_all_links(filename: &str) -> Result<Vec<String>, std::io::Error> {
+fn get_all_links(filename: &str) -> Result<Vec<String>, anyhow::Error> {
     let mut links_file = File::open(filename)?;
 
     let mut all_links = String::new();
     links_file.read_to_string(&mut all_links)?;
 
-    let parts = all_links
+    let mut links: Vec<String> = all_links
         .trim_end_matches("\n")
         .split(", ")
-        .map(|slice: &str| slice.to_string());
+        .map(|slice: &str| slice.to_string())
+        .collect();
 
-    Ok(parts.collect())
+    // use this function once the stabilsation is released.
+    // links.pop_if(|link: &mut String| link.is_empty());
+    if let Some("") = links.last().map(|link: &String| link.as_str()) {
+        links.pop();
+    }
+
+    if links.is_empty() {
+        return Err(anyhow::Error::msg("No links in links.txt"));
+    }
+
+    Ok(links)
 }
 
 async fn request_album_data(link: &str) -> Result<(String, String), anyhow::Error> {
@@ -78,18 +91,54 @@ async fn request_all_album_pages(links: &[String]) {
     }
 }
 
+fn get_codes_of_existing_album_art(
+    album_art_directory: &str,
+) -> Result<HashSet<String>, anyhow::Error> {
+    let mut existing_images: HashSet<String> = HashSet::new();
+
+    let directory = std::fs::read_dir(album_art_directory)?;
+    for dir_entry in directory {
+        let metadata = Metadata::new_from_path(&dir_entry?.path())?;
+
+        let mut exif_iterator = metadata.get_tag(&ExifTag::ImageDescription(String::from("hello")));
+        if let Some(album_code) = exif_iterator.next() {
+            let bytes = album_code.value_as_u8_vec(&little_exif::endian::Endian::Little);
+            existing_images.insert(String::from_utf8(bytes)?);
+        }
+    }
+
+    Ok(existing_images)
+}
+
+fn get_links_to_download(
+    links_file_name: &str,
+    album_art_directory_name: &str,
+) -> Result<Vec<String>, anyhow::Error> {
+    let all_links = get_all_links(links_file_name)?;
+    let existing_album_codes = get_codes_of_existing_album_art(album_art_directory_name)?;
+
+    const YOUTUBE_MUSIC_ALBUM_CODE_LENGTH: usize = 11;
+
+    let mut links_to_download: Vec<String> = Vec::new();
+    for link in all_links {
+        let split_position = link
+            .char_indices()
+            .nth_back(YOUTUBE_MUSIC_ALBUM_CODE_LENGTH)
+            .unwrap()
+            .0;
+        if !existing_album_codes.contains(&link[split_position..]) {
+            links_to_download.push(link);
+        }
+    }
+
+    Ok(links_to_download)
+}
+
 fn main() {
-    let mut links = get_all_links("links.txt").expect("A file named links.txt should be present");
-
-    // use this function once the stabilsation is released.
-    // links.pop_if(|link: &mut String| link.is_empty());
-    if let Some("") = links.last().map(|link: &String| link.as_str()) {
-        links.pop();
-    }
-
-    if links.is_empty() {
-        panic!("No links in links.txt")
-    }
+    let links_to_download = match get_links_to_download("links.txt", "album_arts") {
+        Ok(links) => links,
+        Err(error) => panic!("{error:?}"),
+    };
 
     std::fs::create_dir_all("album_arts").expect("Failed to create album_arts directory");
 
@@ -97,5 +146,5 @@ fn main() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(request_all_album_pages(&links))
+        .block_on(request_all_album_pages(&links_to_download))
 }
