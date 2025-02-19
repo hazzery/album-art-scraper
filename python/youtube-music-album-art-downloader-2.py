@@ -1,5 +1,4 @@
 import asyncio
-import os
 import pathlib
 import sys
 
@@ -129,22 +128,78 @@ async def run_downloads(links_to_download: list[str]) -> None:
         await asyncio.gather(*download_tasks)
 
 
-def main() -> None:
-    """Figure out which imgages already exist and download new ones."""
-    with open("links.txt") as link_file:
-        links = link_file.read().split(", ")
+def get_codes_of_existing_album_art(album_art_directory_name: str) -> set[str]:
+    """Create a set of all existing album art images.
+
+    :param album_art_directory_name: The name of the directory to find existing
+        images in.
+
+    :returns: A set of the album codes for each existing image.
+
+    :raises OSError: If ``album_art_directory_name`` points to a file.
+    """
+    album_art_directory = pathlib.Path(album_art_directory_name)
+    if not album_art_directory.exists():
+        album_art_directory.mkdir()
+        return set()
+
+    if not album_art_directory.is_dir():
+        message = (
+            f"Unable to read album art images from {album_art_directory_name}"
+            " as it is not a directory."
+        )
+        raise OSError(message)
 
     existing_images = set()
-    for image_file in os.listdir("album_arts"):
-        exif = piexif.load("album_arts/" + image_file)
+    for image_file in album_art_directory.iterdir():
+        exif = piexif.load(str(image_file))
         existing_images.add(exif["0th"][piexif.ImageIFD.ImageDescription])
 
-    links_to_download = [
-        link for link in links if link[-17:].encode() not in existing_images
+    return existing_images
+
+
+def get_all_links(links_file_name: str) -> list[str]:
+    """Read in all links from the links file.
+
+    :param links_file_name: The name of the file to read album links from.
+
+    :returns: A list of all album links in the links file.
+
+    :raises OSError: If ``links_file_name`` points to a directory.
+    """
+    links_file = pathlib.Path(links_file_name)
+    if not links_file.exists():
+        return []
+
+    if not links_file.is_file():
+        message = f"Unable to read links from {links_file_name} as it is not a file."
+        raise OSError(message)
+
+    return links_file.read_text().split(", ")
+
+
+def get_links_to_download(
+    links_file_name: str,
+    album_art_directory_name: str,
+) -> list[str]:
+    """Read in all links from file and check for ones already present.
+
+    :param links_file_name: The name of the file to find links in.
+
+    :param album_art_directory_name: The name of the directory to find
+        existing images in.
+    """
+    all_links = get_all_links(links_file_name)
+    existing_album_codes = get_codes_of_existing_album_art(album_art_directory_name)
+
+    return [
+        link for link in all_links if link[-17:].encode() not in existing_album_codes
     ]
 
-    # Ensure folder to save images in is present
-    pathlib.Path("album_arts").mkdir(exist_ok=True)
+
+def main() -> None:
+    """Figure out which imgages already exist and download new ones."""
+    links_to_download = get_links_to_download("links.txt", "album_arts")
 
     asyncio.run(run_downloads(links_to_download))
 
