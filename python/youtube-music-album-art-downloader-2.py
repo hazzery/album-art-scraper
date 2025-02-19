@@ -22,6 +22,7 @@ async def download_album_art(
     link: str,
     album_title: str,
     youtube_album_code: str,
+    album_art_directory_name: str,
 ) -> None:
     """Asyncronously download the album art image from the specified link.
 
@@ -33,7 +34,7 @@ async def download_album_art(
     """
     async with session.get(link) as album_art_response:
         sanitised_album_title = album_title.replace("/", " ")
-        filename = f"album_arts/{sanitised_album_title}.jpg"
+        filename = f"{album_art_directory_name}/{sanitised_album_title}.jpg"
         exif_data = piexif.dump(
             {
                 "0th": {piexif.ImageIFD.ImageDescription: youtube_album_code.encode()},
@@ -48,8 +49,8 @@ async def download_album_art(
 
 async def request_album_page(
     session: aiohttp.ClientSession,
-    album_art_session: aiohttp.ClientSession,
     link: str,
+    album_art_directory_name: str,
     download_tasks: list[asyncio.Task],
 ) -> None:
     """Asyncronously fetch the YouTube Music album page at the specified URL.
@@ -97,30 +98,31 @@ async def request_album_page(
         download_tasks.append(
             asyncio.create_task(
                 download_album_art(
-                    album_art_session,
+                    session,
                     album_art_link,
                     album_title,
                     link[-17:],
+                    album_art_directory_name,
                 ),
             ),
         )
 
 
-async def run_downloads(links_to_download: list[str]) -> None:
+async def run_downloads(
+    links_to_download: list[str],
+    album_art_directory_name: str,
+) -> None:
     """Download album art images for each album link in ``links_to_download``.
 
     :param links_to_download: A list of links to YouTube Music album pages.
     """
     download_tasks = []
-    async with (
-        aiohttp.ClientSession() as youtube_music_session,
-        aiohttp.ClientSession() as google_user_content_session,
-    ):
+    async with aiohttp.ClientSession() as client_session:
         tasks = [
             request_album_page(
-                youtube_music_session,
-                google_user_content_session,
+                client_session,
                 link,
+                album_art_directory_name,
                 download_tasks,
             )
             for link in links_to_download
@@ -227,7 +229,7 @@ def main() -> None:
         arguments.image_directory,
     )
 
-    asyncio.run(run_downloads(links_to_download))
+    asyncio.run(run_downloads(links_to_download, arguments.image_directory))
 
 
 if __name__ == "__main__":
