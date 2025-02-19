@@ -70,6 +70,7 @@ async fn download_album_art_image(
     album_title: &str,
     album_art_link: &str,
     youtube_album_code: &str,
+    album_art_directory_name: &str,
 ) -> Result<(), anyhow::Error> {
     let mut response = reqwest::get(album_art_link).await?.bytes().await?.to_vec();
 
@@ -77,18 +78,23 @@ async fn download_album_art_image(
     metadata.set_tag(ExifTag::ImageDescription(youtube_album_code.to_string()));
     metadata.write_to_vec(&mut response, little_exif::filetype::FileExtension::JPEG)?;
 
-    let mut file = File::create(format!("album_arts/{}.jpg", album_title))?;
+    let mut file = File::create(format!("{album_art_directory_name}/{album_title}.jpg"))?;
     file.write_all(&response)?;
 
     Ok(())
 }
 
-async fn run(link: String) {
+async fn run(link: String, album_art_directory_name: &str) {
     match request_album_data(&link).await {
         Ok((album_title, album_art_link)) => {
             let album_code = trim_album_code_from_link(&link);
-            if let Err(error) =
-                download_album_art_image(&album_title, &album_art_link, album_code).await
+            if let Err(error) = download_album_art_image(
+                &album_title,
+                &album_art_link,
+                album_code,
+                album_art_directory_name,
+            )
+            .await
             {
                 eprintln!("{error:?}");
             }
@@ -97,12 +103,12 @@ async fn run(link: String) {
     };
 }
 
-async fn request_all_album_pages(links: &[String]) {
+async fn request_all_album_pages(links: &[String], album_art_directory_name: &'static str) {
     let mut set = tokio::task::JoinSet::new();
 
     for link in links.iter() {
         let link_clone = link.clone();
-        set.spawn(async move { run(link_clone).await });
+        set.spawn(async move { run(link_clone, album_art_directory_name).await });
     }
     while let Some(res) = set.join_next().await {
         if let Err(error) = res {
@@ -162,5 +168,5 @@ fn main() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(request_all_album_pages(&links_to_download))
+        .block_on(request_all_album_pages(&links_to_download, "album_arts"))
 }
