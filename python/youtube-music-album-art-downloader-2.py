@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import pathlib
 import sys
@@ -145,7 +146,7 @@ def get_codes_of_existing_album_art(album_art_directory_name: str) -> set[str]:
 
     if not album_art_directory.is_dir():
         message = (
-            f"Unable to read album art images from {album_art_directory_name}"
+            f"Unable to read album art images from `{album_art_directory_name}`"
             " as it is not a directory."
         )
         raise OSError(message)
@@ -169,10 +170,11 @@ def get_all_links(links_file_name: str) -> list[str]:
     """
     links_file = pathlib.Path(links_file_name)
     if not links_file.exists():
+        print_error(f"Links file `{links_file_name}` does not exist")
         return []
 
     if not links_file.is_file():
-        message = f"Unable to read links from {links_file_name} as it is not a file."
+        message = f"Unable to read links from `{links_file_name}` as it is not a file."
         raise OSError(message)
 
     return links_file.read_text().split(", ")
@@ -199,7 +201,31 @@ def get_links_to_download(
 
 def main() -> None:
     """Figure out which imgages already exist and download new ones."""
-    links_to_download = get_links_to_download("links.txt", "album_arts")
+    argument_parser = argparse.ArgumentParser(
+        "youtube-music-album-art-scraper",
+        description="Download album art images from YouTube Music",
+    )
+
+    argument_parser.add_argument(
+        "--links-file",
+        "-l",
+        help="The file to read album links from. Defaults to `links.txt`",
+        default="links.txt",
+    )
+
+    argument_parser.add_argument(
+        "--image-directory",
+        "-d",
+        help="The directory to download album art images to. Defaults to `album_arts`",
+        default="album_arts",
+    )
+
+    arguments = argument_parser.parse_args()
+
+    links_to_download = get_links_to_download(
+        arguments.links_file,
+        arguments.image_directory,
+    )
 
     asyncio.run(run_downloads(links_to_download))
 
