@@ -4,6 +4,18 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::prelude::*;
 
+const YOUTUBE_MUSIC_ALBUM_CODE_LENGTH: usize = 11;
+
+fn trim_album_code_from_link(link: &str) -> &str {
+    let split_position = link
+        .char_indices()
+        .nth_back(YOUTUBE_MUSIC_ALBUM_CODE_LENGTH)
+        .unwrap()
+        .0;
+
+    &link[split_position..]
+}
+
 fn get_all_links(filename: &str) -> Result<Vec<String>, anyhow::Error> {
     let mut links_file = File::open(filename)?;
 
@@ -57,8 +69,13 @@ async fn request_album_data(link: &str) -> Result<(String, String), anyhow::Erro
 async fn download_album_art_image(
     album_title: &str,
     album_art_link: &str,
+    youtube_album_code: &str,
 ) -> Result<(), anyhow::Error> {
-    let response = reqwest::get(album_art_link).await?.bytes().await?;
+    let mut response = reqwest::get(album_art_link).await?.bytes().await?.to_vec();
+
+    let mut metadata = Metadata::new();
+    metadata.set_tag(ExifTag::ImageDescription(youtube_album_code.to_string()));
+    metadata.write_to_vec(&mut response, little_exif::filetype::FileExtension::JPEG)?;
 
     let mut file = File::create(format!("album_arts/{}.jpg", album_title))?;
     file.write_all(&response)?;
@@ -69,7 +86,10 @@ async fn download_album_art_image(
 async fn run(link: String) {
     match request_album_data(&link).await {
         Ok((album_title, album_art_link)) => {
-            if let Err(error) = download_album_art_image(&album_title, &album_art_link).await {
+            let album_code = trim_album_code_from_link(&link);
+            if let Err(error) =
+                download_album_art_image(&album_title, &album_art_link, album_code).await
+            {
                 println!("{}", error);
             }
         }
@@ -97,12 +117,13 @@ fn get_codes_of_existing_album_art(
     let mut existing_images: HashSet<String> = HashSet::new();
 
     let directory = std::fs::read_dir(album_art_directory)?;
-    for dir_entry in directory {
-        let metadata = Metadata::new_from_path(&dir_entry?.path())?;
+    for file in directory {
+        let metadata = Metadata::new_from_path(&file?.path())?;
 
         let mut exif_iterator = metadata.get_tag(&ExifTag::ImageDescription(String::from("hello")));
         if let Some(album_code) = exif_iterator.next() {
-            let bytes = album_code.value_as_u8_vec(&little_exif::endian::Endian::Little);
+            let mut bytes = album_code.value_as_u8_vec(&little_exif::endian::Endian::Little);
+            bytes.pop();
             existing_images.insert(String::from_utf8(bytes)?);
         }
     }
@@ -117,18 +138,13 @@ fn get_links_to_download(
     let all_links = get_all_links(links_file_name)?;
     let existing_album_codes = get_codes_of_existing_album_art(album_art_directory_name)?;
 
-    const YOUTUBE_MUSIC_ALBUM_CODE_LENGTH: usize = 11;
-
     let mut links_to_download: Vec<String> = Vec::new();
     for link in all_links {
-        let split_position = link
-            .char_indices()
-            .nth_back(YOUTUBE_MUSIC_ALBUM_CODE_LENGTH)
-            .unwrap()
-            .0;
-        if !existing_album_codes.contains(&link[split_position..]) {
-            links_to_download.push(link);
+        let album_code = trim_album_code_from_link(&link);
+        if existing_album_codes.contains(album_code) {
+            continue;
         }
+        links_to_download.push(link);
     }
 
     Ok(links_to_download)
