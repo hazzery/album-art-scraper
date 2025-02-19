@@ -90,10 +90,10 @@ async fn run(link: String) {
             if let Err(error) =
                 download_album_art_image(&album_title, &album_art_link, album_code).await
             {
-                println!("{}", error);
+                eprintln!("{error:?}");
             }
         }
-        Err(error) => println!("{:?}\n", error),
+        Err(error) => eprintln!("{error:?}"),
     };
 }
 
@@ -106,7 +106,7 @@ async fn request_all_album_pages(links: &[String]) {
     }
     while let Some(res) = set.join_next().await {
         if let Err(error) = res {
-            println!("{}", error);
+            eprintln!("{error:?}");
         }
     }
 }
