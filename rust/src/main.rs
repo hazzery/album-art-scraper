@@ -84,6 +84,8 @@ async fn download_album_art_image(
     youtube_album_code: &str,
     album_art_directory_name: &str,
 ) -> Result<(), anyhow::Error> {
+    println!("Downloading image for {}", album_title);
+
     let mut response = reqwest::get(album_art_link).await?.bytes().await?.to_vec();
 
     let mut metadata = Metadata::new();
