@@ -183,7 +183,10 @@ fn get_links_to_download(
 fn main() {
     let links_to_download = match get_links_to_download("links.txt", "album_arts") {
         Ok(links) => links,
-        Err(error) => panic!("{error:?}"),
+        Err(error) => {
+            eprintln!("{error:?}");
+            std::process::exit(1);
+        }
     };
 
     tokio::runtime::Builder::new_multi_thread()
