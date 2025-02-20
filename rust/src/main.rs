@@ -115,7 +115,7 @@ async fn download_album_art_image(
     Ok(())
 }
 
-async fn run(link: String, album_art_directory_name: std::path::PathBuf) {
+async fn run(link: String, album_art_directory_name: &std::path::Path) {
     match request_album_data(&link).await {
         Ok((album_title, album_art_link)) => {
             let album_code = trim_album_code_from_link(&link);
@@ -123,7 +123,7 @@ async fn run(link: String, album_art_directory_name: std::path::PathBuf) {
                 &album_title,
                 &album_art_link,
                 album_code,
-                &album_art_directory_name,
+                album_art_directory_name,
             )
             .await
             {
@@ -135,12 +135,13 @@ async fn run(link: String, album_art_directory_name: std::path::PathBuf) {
 }
 
 async fn request_all_album_pages(links: &[String], album_art_directory_name: std::path::PathBuf) {
+    let album_art_directory_name = std::sync::Arc::new(album_art_directory_name);
     let mut set = tokio::task::JoinSet::new();
 
     for link in links.iter() {
         let link_clone = link.clone();
-        let album_art_directory_name_clone = album_art_directory_name.clone();
-        set.spawn(async move { run(link_clone, album_art_directory_name_clone).await });
+        let album_art_directory_name_clone = std::sync::Arc::clone(&album_art_directory_name);
+        set.spawn(async move { run(link_clone, &album_art_directory_name_clone).await });
     }
     while let Some(res) = set.join_next().await {
         if let Err(error) = res {
