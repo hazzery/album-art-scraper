@@ -17,7 +17,19 @@ fn trim_album_code_from_link(link: &str) -> &str {
 }
 
 fn get_all_links(filename: &str) -> Result<Vec<String>, anyhow::Error> {
-    let mut links_file = File::open(filename)?;
+    let file = std::path::Path::new(filename);
+
+    if !file.exists() {
+        return Ok(Vec::new());
+    }
+
+    if !file.is_file() {
+        return Err(anyhow::Error::msg(format!(
+            "Unable to read links from `{}` as it is not a file.",
+            filename,
+        )));
+    }
+    let mut links_file = File::open(file)?;
 
     let mut all_links = String::new();
     links_file.read_to_string(&mut all_links)?;
@@ -120,10 +132,22 @@ async fn request_all_album_pages(links: &[String], album_art_directory_name: &'s
 fn get_codes_of_existing_album_art(
     album_art_directory: &str,
 ) -> Result<HashSet<String>, anyhow::Error> {
+    let directory = std::path::Path::new(album_art_directory);
+    if !directory.exists() {
+        std::fs::create_dir_all(directory)?;
+        return Ok(HashSet::new());
+    }
+
+    if !directory.is_dir() {
+        return Err(anyhow::Error::msg(format!(
+            "Unable to read album art images from `{}` as it is not a directory.",
+            album_art_directory
+        )));
+    }
+
     let mut existing_images: HashSet<String> = HashSet::new();
 
-    let directory = std::fs::read_dir(album_art_directory)?;
-    for file in directory {
+    for file in std::fs::read_dir(directory)? {
         let metadata = Metadata::new_from_path(&file?.path())?;
 
         let mut exif_iterator = metadata.get_tag(&ExifTag::ImageDescription(String::from("hello")));
@@ -161,8 +185,6 @@ fn main() {
         Ok(links) => links,
         Err(error) => panic!("{error:?}"),
     };
-
-    std::fs::create_dir_all("album_arts").expect("Failed to create album_arts directory");
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
