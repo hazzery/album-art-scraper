@@ -1,8 +1,21 @@
+use clap::Parser;
 use little_exif::exif_tag::ExifTag;
 use little_exif::metadata::Metadata;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::prelude::*;
+
+/// Download album art images of albums specified by links in file.
+#[derive(Parser)]
+struct Cli {
+    /// The file to find album links in.
+    #[arg(short, long, default_value = "links.txt")]
+    links_file: std::path::PathBuf,
+
+    /// The directory to download album art images to.
+    #[arg(short, long, default_value = "album_arts")]
+    image_directory: std::path::PathBuf,
+}
 
 const YOUTUBE_MUSIC_ALBUM_CODE_LENGTH: usize = 11;
 
@@ -16,7 +29,7 @@ fn trim_album_code_from_link(link: &str) -> &str {
     &link[split_position..]
 }
 
-fn get_all_links(filename: &str) -> Result<Vec<String>, anyhow::Error> {
+fn get_all_links(filename: &std::path::Path) -> Result<Vec<String>, anyhow::Error> {
     let file = std::path::Path::new(filename);
 
     if !file.exists() {
@@ -26,7 +39,7 @@ fn get_all_links(filename: &str) -> Result<Vec<String>, anyhow::Error> {
     if !file.is_file() {
         return Err(anyhow::Error::msg(format!(
             "Unable to read links from `{}` as it is not a file.",
-            filename,
+            filename.to_string_lossy(),
         )));
     }
     let mut links_file = File::open(file)?;
@@ -82,7 +95,7 @@ async fn download_album_art_image(
     album_title: &str,
     album_art_link: &str,
     youtube_album_code: &str,
-    album_art_directory_name: &str,
+    album_art_directory_name: &std::path::Path,
 ) -> Result<(), anyhow::Error> {
     println!("Downloading image for {}", album_title);
 
@@ -92,13 +105,17 @@ async fn download_album_art_image(
     metadata.set_tag(ExifTag::ImageDescription(youtube_album_code.to_string()));
     metadata.write_to_vec(&mut response, little_exif::filetype::FileExtension::JPEG)?;
 
-    let mut file = File::create(format!("{album_art_directory_name}/{album_title}.jpg"))?;
+    let mut file = File::create(
+        album_art_directory_name
+            .join(album_title.replace("/", " "))
+            .with_extension("jpg"),
+    )?;
     file.write_all(&response)?;
 
     Ok(())
 }
 
-async fn run(link: String, album_art_directory_name: &str) {
+async fn run(link: String, album_art_directory_name: std::path::PathBuf) {
     match request_album_data(&link).await {
         Ok((album_title, album_art_link)) => {
             let album_code = trim_album_code_from_link(&link);
@@ -106,7 +123,7 @@ async fn run(link: String, album_art_directory_name: &str) {
                 &album_title,
                 &album_art_link,
                 album_code,
-                album_art_directory_name,
+                &album_art_directory_name,
             )
             .await
             {
@@ -117,12 +134,13 @@ async fn run(link: String, album_art_directory_name: &str) {
     };
 }
 
-async fn request_all_album_pages(links: &[String], album_art_directory_name: &'static str) {
+async fn request_all_album_pages(links: &[String], album_art_directory_name: std::path::PathBuf) {
     let mut set = tokio::task::JoinSet::new();
 
     for link in links.iter() {
         let link_clone = link.clone();
-        set.spawn(async move { run(link_clone, album_art_directory_name).await });
+        let album_art_directory_name_clone = album_art_directory_name.clone();
+        set.spawn(async move { run(link_clone, album_art_directory_name_clone).await });
     }
     while let Some(res) = set.join_next().await {
         if let Err(error) = res {
@@ -132,7 +150,7 @@ async fn request_all_album_pages(links: &[String], album_art_directory_name: &'s
 }
 
 fn get_codes_of_existing_album_art(
-    album_art_directory: &str,
+    album_art_directory: &std::path::Path,
 ) -> Result<HashSet<String>, anyhow::Error> {
     let directory = std::path::Path::new(album_art_directory);
     if !directory.exists() {
@@ -143,7 +161,7 @@ fn get_codes_of_existing_album_art(
     if !directory.is_dir() {
         return Err(anyhow::Error::msg(format!(
             "Unable to read album art images from `{}` as it is not a directory.",
-            album_art_directory
+            album_art_directory.to_string_lossy(),
         )));
     }
 
@@ -164,8 +182,8 @@ fn get_codes_of_existing_album_art(
 }
 
 fn get_links_to_download(
-    links_file_name: &str,
-    album_art_directory_name: &str,
+    links_file_name: &std::path::Path,
+    album_art_directory_name: &std::path::Path,
 ) -> Result<Vec<String>, anyhow::Error> {
     let all_links = get_all_links(links_file_name)?;
     let existing_album_codes = get_codes_of_existing_album_art(album_art_directory_name)?;
@@ -183,7 +201,9 @@ fn get_links_to_download(
 }
 
 fn main() {
-    let links_to_download = match get_links_to_download("links.txt", "album_arts") {
+    let args = Cli::parse();
+
+    let links_to_download = match get_links_to_download(&args.links_file, &args.image_directory) {
         Ok(links) => links,
         Err(error) => {
             eprintln!("{error:?}");
@@ -195,5 +215,8 @@ fn main() {
         .enable_all()
         .build()
         .unwrap()
-        .block_on(request_all_album_pages(&links_to_download, "album_arts"))
+        .block_on(request_all_album_pages(
+            &links_to_download,
+            args.image_directory,
+        ))
 }
