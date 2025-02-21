@@ -33,6 +33,10 @@ fn get_all_links(filename: &std::path::Path) -> Result<Vec<String>, anyhow::Erro
     let file = std::path::Path::new(filename);
 
     if !file.exists() {
+        println!(
+            "No file links file `{}` present, nothing to do.",
+            filename.to_string_lossy()
+        );
         return Ok(Vec::new());
     }
 
@@ -187,6 +191,10 @@ fn get_links_to_download(
     album_art_directory_name: &std::path::Path,
 ) -> Result<Vec<String>, anyhow::Error> {
     let all_links = get_all_links(links_file_name)?;
+    if all_links.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let existing_album_codes = get_codes_of_existing_album_art(album_art_directory_name)?;
 
     let mut links_to_download: Vec<String> = Vec::new();
@@ -211,6 +219,10 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    if links_to_download.is_empty() {
+        println!("Nothing to download!");
+    }
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
