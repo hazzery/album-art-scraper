@@ -19,6 +19,11 @@ struct Cli {
 
 const YOUTUBE_MUSIC_ALBUM_CODE_LENGTH: usize = 11;
 
+/// Trim the album code from the back of an album link.
+///
+/// ## Arguments:
+///
+/// * `link`: Target Document ID.
 fn trim_album_code_from_link(link: &str) -> &str {
     let split_position = link
         .char_indices()
@@ -29,6 +34,11 @@ fn trim_album_code_from_link(link: &str) -> &str {
     &link[split_position..]
 }
 
+/// Get a list of all the links in the specified links file.
+///
+/// ## Arguments:
+///
+/// * `filename`: Path to the file to extract links from.
 fn get_all_links(filename: &std::path::Path) -> Result<Vec<String>, anyhow::Error> {
     let file = std::path::Path::new(filename);
 
@@ -70,6 +80,12 @@ fn get_all_links(filename: &std::path::Path) -> Result<Vec<String>, anyhow::Erro
     Ok(links)
 }
 
+/// Request the album page at `link`, parse the response document, and find the album title and
+/// link to album art.
+///
+/// ## Arguments:
+///
+/// * `link`: A single link to a YouTube Music album page.
 async fn request_album_data(link: &str) -> Result<(String, String), anyhow::Error> {
     let response = reqwest::get(link).await?.text().await?;
 
@@ -95,6 +111,21 @@ async fn request_album_data(link: &str) -> Result<(String, String), anyhow::Erro
     }
 }
 
+/// Download a single album art image and write it to the file system with the album code in its
+/// exif data.
+///
+/// ## Arguments:
+///
+/// * `album_title`: The title of the album whose art is being downloaded, this is used as the
+///     filename.
+///
+/// * `album_art_link`: The link to the album art image to be downloaded.
+///
+/// * `youtube_album_code`: The YouTube Music album code of the album whose art id being
+///     downloaded. This is written into the ImageDescription field of the image's exif data.
+///
+/// * `album_art_directory_name`: Path to the directory to write the file to once it has been
+///     downloaded.
 async fn download_album_art_image(
     album_title: &str,
     album_art_link: &str,
@@ -119,6 +150,13 @@ async fn download_album_art_image(
     Ok(())
 }
 
+/// Run the full download process for a single album.
+///
+/// ## Arguments:
+///
+/// * `link`: The YouTube Music album link for the album.
+///
+/// * `album_art_directory_name`: Path to the directory where the album art image should be saved.
 async fn run(link: String, album_art_directory_name: &std::path::Path) {
     match request_album_data(&link).await {
         Ok((album_title, album_art_link)) => {
@@ -138,6 +176,13 @@ async fn run(link: String, album_art_directory_name: &std::path::Path) {
     };
 }
 
+/// Run the full download process for all albums.
+///
+/// ## Arguments:
+///
+/// * `links`: The YouTube Music album links to run downloads for.
+///
+/// * `album_art_directory_name`: Path to the directory where the album art image should be saved.
 async fn request_all_album_pages(links: &[String], album_art_directory_name: std::path::PathBuf) {
     let album_art_directory_name = std::sync::Arc::new(album_art_directory_name);
     let mut set = tokio::task::JoinSet::new();
@@ -154,6 +199,12 @@ async fn request_all_album_pages(links: &[String], album_art_directory_name: std
     }
 }
 
+/// Read the EXIF data of all images in `album_art_directory` to determine which images should be
+/// requested and which shouldn't.
+///
+/// ## Arguments:
+///
+/// * `album_art_directory`: Path to the directory where existing album art images can be found.
 fn get_codes_of_existing_album_art(
     album_art_directory: &std::path::Path,
 ) -> Result<HashSet<String>, anyhow::Error> {
@@ -186,6 +237,15 @@ fn get_codes_of_existing_album_art(
     Ok(existing_images)
 }
 
+/// Compute a list of all YouTube Music album links which should be downloaded, based off of the
+/// contents of the links file and the existing images in the image directory. So we can prevent
+/// them from being re-downloaded.
+///
+/// ## Arguments:
+///
+/// * `links_file_name`: Path to the file to extract links from.
+///
+/// * `album_art_directory_name`: Path to the directory where existing album art images can be found.
 fn get_links_to_download(
     links_file_name: &std::path::Path,
     album_art_directory_name: &std::path::Path,
@@ -209,6 +269,9 @@ fn get_links_to_download(
     Ok(links_to_download)
 }
 
+/// Parse command line arguments to determine the location of the links file and image directory,
+/// read in all links in the links file, filter out links that lead to albums whose art is already
+/// downloaded, and download all remaining album art images.
 fn main() {
     let args = Cli::parse();
 
