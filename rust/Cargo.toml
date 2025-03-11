@@ -10,3 +10,7 @@ scraper = "0.22.0"
 anyhow = "1.0.95"
 little_exif = "0.6.2"
 clap = { version = "4.5.30", features = ["derive"] }
+
+[lints.clippy]
+doc_markdown = "allow"
+pedantic = "warn"

@@ -62,7 +62,7 @@ fn get_all_links(filename: &std::path::Path) -> Result<Vec<String>, anyhow::Erro
     links_file.read_to_string(&mut all_links)?;
 
     let mut links: Vec<String> = all_links
-        .trim_end_matches("\n")
+        .trim_end_matches('\n')
         .split(", ")
         .map(|slice: &str| slice.to_string())
         .collect();
@@ -132,7 +132,7 @@ async fn download_album_art_image(
     youtube_album_code: &str,
     album_art_directory_name: &std::path::Path,
 ) -> Result<(), anyhow::Error> {
-    println!("Downloading image for {}", album_title);
+    println!("Downloading image for {album_title}",);
 
     let mut response = reqwest::get(album_art_link).await?.bytes().await?.to_vec();
 
@@ -142,7 +142,7 @@ async fn download_album_art_image(
 
     let mut file = File::create(
         album_art_directory_name
-            .join(album_title.replace("/", " "))
+            .join(album_title.replace('/', " "))
             .with_extension("jpg"),
     )?;
     file.write_all(&response)?;
@@ -187,7 +187,7 @@ async fn request_all_album_pages(links: &[String], album_art_directory_name: std
     let album_art_directory_name = std::sync::Arc::new(album_art_directory_name);
     let mut set = tokio::task::JoinSet::new();
 
-    for link in links.iter() {
+    for link in links {
         let link_clone = link.clone();
         let album_art_directory_name_clone = std::sync::Arc::clone(&album_art_directory_name);
         set.spawn(async move { run(link_clone, &album_art_directory_name_clone).await });
@@ -294,5 +294,5 @@ fn main() {
         .block_on(request_all_album_pages(
             &links_to_download,
             args.image_directory,
-        ))
+        ));
 }
