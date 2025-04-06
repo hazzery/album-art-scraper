@@ -67,11 +67,7 @@ fn get_all_links(filename: &std::path::Path) -> Result<Vec<String>, anyhow::Erro
         .map(|slice: &str| slice.to_string())
         .collect();
 
-    // use this function once the stabilsation is released.
-    // links.pop_if(|link: &mut String| link.is_empty());
-    if let Some("") = links.last().map(|link: &String| link.as_str()) {
-        links.pop();
-    }
+    links.pop_if(|link: &mut String| link.is_empty());
 
     if links.is_empty() {
         return Err(anyhow::Error::msg("No links in links.txt"));
