@@ -101,7 +101,7 @@ async def request_album_page(
                     session,
                     album_art_link,
                     album_title,
-                    link[-17:],
+                    link[-11:],
                     album_art_directory_name,
                 ),
             ),
@@ -143,7 +143,7 @@ def get_codes_of_existing_album_art(album_art_directory_name: str) -> set[str]:
     """
     album_art_directory = pathlib.Path(album_art_directory_name)
     if not album_art_directory.exists():
-        album_art_directory.mkdir()
+        album_art_directory.mkdir(mode=0o755)
         return set()
 
     if not album_art_directory.is_dir():
@@ -156,7 +156,13 @@ def get_codes_of_existing_album_art(album_art_directory_name: str) -> set[str]:
     existing_images = set()
     for image_file in album_art_directory.iterdir():
         exif = piexif.load(str(image_file))
-        existing_images.add(exif["0th"][piexif.ImageIFD.ImageDescription])
+        description = exif["0th"].get(piexif.ImageIFD.ImageDescription)
+        if description is None:
+            continue
+        if isinstance(description, bytes):
+            existing_images.add(description.rstrip(b"\x00"))
+        else:
+            existing_images.add(str(description).encode())
 
     return existing_images
 
@@ -173,7 +179,7 @@ def get_all_links(links_file_name: str) -> list[str]:
     links_file = pathlib.Path(links_file_name)
     if not links_file.exists():
         print_error(f"Links file `{links_file_name}` does not exist")
-        return []
+        raise FileNotFoundError(links_file_name)
 
     if not links_file.is_file():
         message = f"Unable to read links from `{links_file_name}` as it is not a file."
@@ -196,9 +202,7 @@ def get_links_to_download(
     all_links = get_all_links(links_file_name)
     existing_album_codes = get_codes_of_existing_album_art(album_art_directory_name)
 
-    return [
-        link for link in all_links if link[-17:].encode() not in existing_album_codes
-    ]
+    return [link for link in all_links if link[-11:].encode() not in existing_album_codes]
 
 
 def main() -> None:
@@ -224,10 +228,13 @@ def main() -> None:
 
     arguments = argument_parser.parse_args()
 
-    links_to_download = get_links_to_download(
-        arguments.links_file,
-        arguments.image_directory,
-    )
+    try:
+        links_to_download = get_links_to_download(
+            arguments.links_file,
+            arguments.image_directory,
+        )
+    except FileNotFoundError:
+        sys.exit(1)
 
     asyncio.run(run_downloads(links_to_download, arguments.image_directory))
 

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -15,6 +17,12 @@ import (
 )
 
 type StringSet = map[string]struct{}
+
+const (
+	defaultLinksFileName        = "links.txt"
+	defaultImageDirectoryName   = "album_arts"
+	youTubeMusicAlbumCodeLength = 11
+)
 
 func writeFileWithExif(imageData []byte, filename string, albumCode string) {
 	jpegMediaParser := jpeg.NewJpegMediaParser()
@@ -35,19 +43,24 @@ func writeFileWithExif(imageData []byte, filename string, albumCode string) {
 		log.Fatal(err)
 	}
 
-	err = imageFileDirectory0Builder.SetStandardWithName("DocumentName", albumCode)
+	err = imageFileDirectory0Builder.SetStandardWithName("ImageDescription", albumCode)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	imageFileDirectoryByteEncoder := exif.NewIfdByteEncoder()
-	updatedRawExif, err := imageFileDirectoryByteEncoder.EncodeToExif(imageFileDirectory0Builder)
+	err = segmentList.SetExif(exifBuilder)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	log.Print("in write:")
-	log.Print(string(updatedRawExif))
+	var updatedImageData bytes.Buffer
+	err = segmentList.Write(&updatedImageData)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Octal value 0o0644 corresponds to unix file mode -rw-r--r--
-	err = os.WriteFile(filename, imageData, 0o0644)
+	err = os.WriteFile(filename, updatedImageData.Bytes(), 0o0644)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -56,6 +69,7 @@ func writeFileWithExif(imageData []byte, filename string, albumCode string) {
 func downloadAlbumArt(
 	albumArtLink string,
 	albumTitle string,
+	albumCode string,
 	waitGroup *sync.WaitGroup,
 	albumArtClient *http.Client,
 	albumArtDirectoryName string,
@@ -76,8 +90,45 @@ func downloadAlbumArt(
 	albumTitle = strings.ReplaceAll(albumTitle, "/", " ")
 	albumArtFileName := fmt.Sprintf("%s/%s.jpg", albumArtDirectoryName, albumTitle)
 
-	writeFileWithExif(albumArt, albumArtFileName, albumArtLink[len(albumArtLink)-11:])
+	if existingAlbumArtHasCode(albumArtFileName, albumCode) {
+		log.Printf("Skipping %s\n", albumTitle)
+		return
+	}
+
+	writeFileWithExif(albumArt, albumArtFileName, albumCode)
 	log.Printf("Downloaded %s\n", albumTitle)
+}
+
+func existingAlbumArtHasCode(albumArtFileName string, albumCode string) bool {
+	jpegMediaParser := jpeg.NewJpegMediaParser()
+	albumArtFile, err := jpegMediaParser.ParseFile(albumArtFileName)
+	if err != nil {
+		return false
+	}
+
+	rootIfd, _, err := albumArtFile.Exif()
+	if err != nil {
+		return false
+	}
+
+	imageDescription, err := rootIfd.FindTagWithName("ImageDescription")
+	if err != nil || len(imageDescription) != 1 {
+		return false
+	}
+
+	value, err := imageDescription[0].Value()
+	if err != nil {
+		return false
+	}
+
+	switch existingCode := value.(type) {
+	case string:
+		return existingCode == albumCode
+	case []byte:
+		return string(existingCode) == albumCode
+	}
+
+	return false
 }
 
 func getNodeAttr(node *html.Node, key string) string {
@@ -132,8 +183,21 @@ func fetchAlbumPage(albumPageLink string, waitGroup *sync.WaitGroup, albumPageCl
 		return
 	}
 
+	if len(albumPageLink) < youTubeMusicAlbumCodeLength {
+		log.Printf("Album page link didn't contain album code! %s\n", albumPageLink)
+		return
+	}
+
+	albumCode := albumPageLink[len(albumPageLink)-youTubeMusicAlbumCodeLength:]
 	waitGroup.Add(1)
-	go downloadAlbumArt(albumData["og:image"], albumData["og:title"], waitGroup, albumArtClient, albumArtDirectoryName)
+	go downloadAlbumArt(
+		albumData["og:image"],
+		albumData["og:title"],
+		albumCode,
+		waitGroup,
+		albumArtClient,
+		albumArtDirectoryName,
+	)
 }
 
 func getAllLinks(filename string) []string {
@@ -151,18 +215,17 @@ func getCodesOfExistingAlbumArt(albumArtDirectoryName string) StringSet {
 	albumArtDirectory, err := os.ReadDir(albumArtDirectoryName)
 	if err != nil {
 		log.Println(err)
-		err := os.Mkdir(albumArtDirectoryName, os.ModePerm)
+		err := os.MkdirAll(albumArtDirectoryName, 0o755)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		var set StringSet
-		return set
+		return make(StringSet)
 	}
 
 	jpegMediaParser := jpeg.NewJpegMediaParser()
 
-	var set StringSet
+	set := make(StringSet)
 
 	for _, albumArtFileEntry := range albumArtDirectory {
 		if albumArtFileEntry.IsDir() {
@@ -172,17 +235,33 @@ func getCodesOfExistingAlbumArt(albumArtDirectoryName string) StringSet {
 		albumArtFileName := albumArtDirectoryName + "/" + albumArtFileEntry.Name()
 
 		albumArtFile, err := jpegMediaParser.ParseFile(albumArtFileName)
-		rootIfd, data, err := albumArtFile.Exif()
-		log.Print("in Read:")
-		log.Print(string(data))
-		documentName, err := rootIfd.FindTagWithName("DocumentName")
-		if len(documentName) != 1 {
-			// log.Fatal(err)
+		if err != nil {
 			log.Print(err)
+			continue
 		}
 
-		// albumCode := documentName[0]
-		// set[albumCode.String()] = struct{}{}
+		rootIfd, _, err := albumArtFile.Exif()
+		if err != nil {
+			log.Print(err)
+			continue
+		}
+
+		imageDescription, err := rootIfd.FindTagWithName("ImageDescription")
+		if err != nil || len(imageDescription) != 1 {
+			continue
+		}
+
+		value, err := imageDescription[0].Value()
+		if err != nil {
+			continue
+		}
+
+		switch albumCode := value.(type) {
+		case string:
+			set[albumCode] = struct{}{}
+		case []byte:
+			set[string(albumCode)] = struct{}{}
+		}
 	}
 	return set
 }
@@ -191,12 +270,10 @@ func getLinksToDownload(linksFileName string, albumArtDirectoryName string) []st
 	allLinks := getAllLinks(linksFileName)
 	existingAlbumCodes := getCodesOfExistingAlbumArt(albumArtDirectoryName)
 
-	const YoutubeMusicAlbumCodeLength = 11
-
 	var linksToDownload []string
 
 	for _, link := range allLinks {
-		albumCode := link[len(link)-YoutubeMusicAlbumCodeLength:]
+		albumCode := link[len(link)-youTubeMusicAlbumCodeLength:]
 		_, ok := existingAlbumCodes[albumCode]
 		if !ok {
 			linksToDownload = append(linksToDownload, link)
@@ -207,7 +284,28 @@ func getLinksToDownload(linksFileName string, albumArtDirectoryName string) []st
 }
 
 func main() {
-	linksToDownload := getLinksToDownload("links.txt", "album_arts")
+	var linksFileName string
+	var imageDirectoryName string
+	var shortLinksFileName string
+	var shortImageDirectoryName string
+
+	linksFileName = defaultLinksFileName
+	imageDirectoryName = defaultImageDirectoryName
+
+	flag.StringVar(&linksFileName, "links-file", defaultLinksFileName, "The file to read album links from.")
+	flag.StringVar(&shortLinksFileName, "l", "", "Alias for --links-file.")
+	flag.StringVar(&imageDirectoryName, "image-directory", defaultImageDirectoryName, "The directory to download album art images to.")
+	flag.StringVar(&shortImageDirectoryName, "d", "", "Alias for --image-directory.")
+	flag.Parse()
+
+	if shortLinksFileName != "" {
+		linksFileName = shortLinksFileName
+	}
+	if shortImageDirectoryName != "" {
+		imageDirectoryName = shortImageDirectoryName
+	}
+
+	linksToDownload := getLinksToDownload(linksFileName, imageDirectoryName)
 
 	youTubeMusicTransport := &http.Transport{}
 	youTubeMusicClient := &http.Client{Transport: youTubeMusicTransport}
@@ -226,7 +324,7 @@ func main() {
 			&waitGroup,
 			youTubeMusicClient,
 			googleUserContentClient,
-			"album_arts",
+			imageDirectoryName,
 		)
 	}
 

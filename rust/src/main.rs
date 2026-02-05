@@ -9,11 +9,11 @@ use std::io::prelude::*;
 #[derive(Parser)]
 struct Cli {
     /// The file to find album links in.
-    #[arg(short, long, default_value = "links.txt")]
+    #[arg(short = 'l', long, default_value = "links.txt")]
     links_file: std::path::PathBuf,
 
     /// The directory to download album art images to.
-    #[arg(short, long, default_value = "album_arts")]
+    #[arg(short = 'd', long, default_value = "album_arts")]
     image_directory: std::path::PathBuf,
 }
 
@@ -43,11 +43,10 @@ fn get_all_links(filename: &std::path::Path) -> Result<Vec<String>, anyhow::Erro
     let file = std::path::Path::new(filename);
 
     if !file.exists() {
-        println!(
+        return Err(anyhow::Error::msg(format!(
             "No file links file `{}` present, nothing to do.",
             filename.to_string_lossy()
-        );
-        return Ok(Vec::new());
+        )));
     }
 
     if !file.is_file() {
@@ -130,17 +129,21 @@ async fn download_album_art_image(
 ) -> Result<(), anyhow::Error> {
     println!("Downloading image for {album_title}",);
 
+    let output_path = album_art_directory_name
+        .join(album_title.replace('/', " "))
+        .with_extension("jpg");
+    if existing_album_art_has_code(&output_path, youtube_album_code)? {
+        println!("Skipping image for {album_title}");
+        return Ok(());
+    }
+
     let mut response = reqwest::get(album_art_link).await?.bytes().await?.to_vec();
 
     let mut metadata = Metadata::new();
     metadata.set_tag(ExifTag::ImageDescription(youtube_album_code.to_string()));
     metadata.write_to_vec(&mut response, little_exif::filetype::FileExtension::JPEG)?;
 
-    let mut file = File::create(
-        album_art_directory_name
-            .join(album_title.replace('/', " "))
-            .with_extension("jpg"),
-    )?;
+    let mut file = File::create(output_path)?;
     file.write_all(&response)?;
 
     Ok(())
@@ -222,15 +225,43 @@ fn get_codes_of_existing_album_art(
     for file in std::fs::read_dir(directory)? {
         let metadata = Metadata::new_from_path(&file?.path())?;
 
-        let mut exif_iterator = metadata.get_tag(&ExifTag::ImageDescription(String::from("hello")));
-        if let Some(album_code) = exif_iterator.next() {
-            let mut bytes = album_code.value_as_u8_vec(&little_exif::endian::Endian::Little);
-            bytes.pop();
-            existing_images.insert(String::from_utf8(bytes)?);
+        if let Some(album_code) = parse_image_description(&metadata) {
+            existing_images.insert(album_code);
         }
     }
 
     Ok(existing_images)
+}
+
+fn parse_image_description(metadata: &Metadata) -> Option<String> {
+    let mut exif_iterator = metadata.get_tag(&ExifTag::ImageDescription(String::from("")));
+    let album_code = exif_iterator.next()?;
+    let mut bytes = album_code.value_as_u8_vec(&little_exif::endian::Endian::Little);
+    let trimmed_length = bytes
+        .iter()
+        .rposition(|&byte| byte != 0)
+        .map_or(0, |index| index + 1);
+    bytes.truncate(trimmed_length);
+    // little_exif prefixes "=" for ASCII ImageDescription values; trim it.
+    if bytes.first() == Some(&b'=') {
+        bytes.remove(0);
+    }
+    String::from_utf8(bytes).ok()
+}
+
+fn existing_album_art_has_code(
+    output_path: &std::path::Path,
+    album_code: &str,
+) -> Result<bool, anyhow::Error> {
+    if !output_path.exists() {
+        return Ok(false);
+    }
+
+    let metadata = Metadata::new_from_path(output_path)?;
+    Ok(matches!(
+        parse_image_description(&metadata),
+        Some(existing_code) if existing_code == album_code
+    ))
 }
 
 /// Compute a list of all YouTube Music album links which should be downloaded, based off of the
