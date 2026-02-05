@@ -2,3 +2,5 @@ album_arts/
 links.txt
 rust/target/
 python/venv/
+python/.venv/
+testing/bin/
