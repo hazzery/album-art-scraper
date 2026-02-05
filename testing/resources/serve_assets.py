@@ -2,6 +2,7 @@ import argparse
 import functools
 import http.server
 import socketserver
+import sys
 from pathlib import Path
 
 
@@ -17,9 +18,20 @@ def main() -> None:
         directory=args.directory,
     )
 
-    with socketserver.TCPServer(("127.0.0.1", args.port), handler) as server:
-        Path(args.port_file).write_text(str(server.server_address[1]), encoding="utf-8")
-        server.serve_forever()
+    try:
+        with socketserver.TCPServer(("127.0.0.1", args.port), handler) as server:
+            Path(args.port_file).write_text(
+                str(server.server_address[1]),
+                encoding="utf-8",
+            )
+            server.serve_forever()
+    except OSError as exc:
+        print(
+            "Failed to start test server (possible port conflict or permissions): "
+            f"{exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

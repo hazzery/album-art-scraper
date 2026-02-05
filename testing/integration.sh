@@ -22,11 +22,11 @@ trap cleanup EXIT
 cp "$resources_dir/album.jpg" "$image_path"
 
 if [[ ! -x "$python_exec" ]]; then
-  echo "Missing Python virtualenv. Run: make -C $root_dir/python export" >&2
+  echo "Missing Python virtualenv or dependencies. Run: make -C \"$root_dir/python\" export" >&2
   exit 1
 fi
 
-python "$resources_dir/serve_assets.py" \
+"$python_exec" "$resources_dir/serve_assets.py" \
   --directory "$temp_dir" \
   --port 0 \
   --port-file "$port_file" \
@@ -42,7 +42,7 @@ for _ in {1..20}; do
 done
 
 if [[ -z "${port:-}" ]]; then
-  echo "Failed to determine server port." >&2
+  echo "Failed to determine server port. Check '$port_file' or verify the test server started." >&2
   exit 1
 fi
 
@@ -122,7 +122,7 @@ function run_tests() {
   local defaults_dir="$temp_dir/${name}_defaults"
 
   if [[ ! -x "$app" ]]; then
-    echo "Expected executable at $app. Run: make -C $root_dir/$name export" >&2
+    echo "Expected executable at $app. Run: make -C $name export from the repository root." >&2
     exit 1
   fi
 
